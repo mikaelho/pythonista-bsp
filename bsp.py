@@ -127,7 +127,13 @@ class SpringView(ui.View):
               path.line_width = 1
               ui.set_color('lightgray')
             path.stroke()
-    
+      l = self[self.selected_node.key]
+      ui.set_color((0,0,0,0.1))
+      for d in range(1, 6):
+        #d = 3
+        path = ui.Path.rounded_rect(l.x - d, l.y - d, l.width + 2 * d, l.height + 2 * d, 2 * d)
+        path.fill()
+  
   def select(self, key):
     self.model.push(key)
     self.focus(key)
