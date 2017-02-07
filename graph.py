@@ -1,5 +1,5 @@
 # coding: utf-8
-import collections, math, random
+import collections, math, random, numbers
 
 class Vector(collections.namedtuple('Vector', ('x', 'y'))):
   __slots__ = ()
@@ -56,7 +56,7 @@ class Node():
   def __repr__(self):
     return self.title
       
-def force_layout(nodes, center_node, iterations = 10, positions = None, target_bounds = (0, 0, 1, 1), fixed = None):
+def force_layout(nodes, center_node, iterations = 10, positions = None, target_bounds = (0, 0, 1, 1), fixed = None, center_fixed = False):
 
   if len(nodes) == 0:
     return{}
@@ -66,6 +66,8 @@ def force_layout(nodes, center_node, iterations = 10, positions = None, target_b
     positions = {}
   if not fixed:
     fixed = set()
+  if center_fixed:
+    fixed.add(center_node)
   deltas = {}
   gravity = False
   k = 0.01
@@ -84,7 +86,7 @@ def force_layout(nodes, center_node, iterations = 10, positions = None, target_b
     # Center pull
     if gravity:
       for node in positions:
-        if node != center_node and node not in fixed:
+        if node not in fixed:
           pull = (center_vector - positions[node]) * k
           deltas[node] += pull
     
@@ -109,12 +111,15 @@ def force_layout(nodes, center_node, iterations = 10, positions = None, target_b
     
     # Nodes move
     for node in positions.keys():
-      if node != center_node and node not in fixed:
+      if node not in fixed:
         positions[node] += deltas[node]
- 
-  return scale(positions, center_node, target_bounds, fixed)
   
-def scale(positions, center_node, target_bounds, fixed):
+  if center_fixed:
+    return scale_centric(positions, center_node, target_bounds, fixed)
+  else:
+    return scale_even(positions, center_node, target_bounds, fixed)
+  
+def scale_centric(positions, center_node, target_bounds, fixed):
   center = positions[center_node]
   min_x = max_x = min_y = max_y = 0
   
@@ -154,6 +159,44 @@ def scale(positions, center_node, target_bounds, fixed):
       converted_positions[node] = Vector(
         center.x + dx * (high_cx if dx > 0 else low_cx),
         center.y + dy * (high_cy if dy > 0 else low_cy)
+      )
+    
+  return converted_positions
+
+def scale_even(positions, center_node, target_bounds, fixed):
+  min_x = max_x = min_y = max_y = None
+  
+  for node in positions:
+    pos = positions[node]
+    if not isinstance(max_x, numbers.Number):
+      max_x = min_x = pos.x
+      max_y = min_y = pos.y
+    else: 
+      max_x = max(max_x, pos.x)
+      min_x = min(min_x, pos.x)
+      max_y = max(max_y, pos.y)
+      min_y = min(min_y, pos.y)
+
+  sx = min_x
+  sy = min_y
+  sw = max_x - min_x
+  sh = max_y - min_y
+  
+  (tx, ty, tw, th) = target_bounds
+  
+  cx = tw/sw
+  cy = th/sh
+  
+  converted_positions = {}
+  
+  for node in positions:
+    pos = positions[node]
+    if node in fixed:
+      converted_positions[node] = positions[node]
+    else:
+      converted_positions[node] = Vector(
+        tx + cx * (pos.x - sx),
+        ty + cy * (pos.y - sy)
       )
     
   return converted_positions

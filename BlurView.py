@@ -15,7 +15,7 @@ class BlurView (ui.View):
             self.effect_view.removeFromSuperview()
         UIVisualEffectView = ObjCClass('UIVisualEffectView')
         UIBlurEffect = ObjCClass('UIBlurEffect')
-        frame = (self.bounds[:2], self.bounds[2:])
+        frame = (self.bounds[0], self.bounds[1]), (self.bounds[2], self.bounds[3])
         self.effect_view = UIVisualEffectView.alloc().initWithFrame_(frame).autorelease()
         effect = UIBlurEffect.effectWithStyle_(self._style)
         self.effect_view.effect = effect

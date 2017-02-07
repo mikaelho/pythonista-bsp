@@ -47,6 +47,11 @@ class Model(ReminderStore):
       new_history = s['graph_history'][:new_index]
       #new_history.append({ 'type': type, 'key': key, 'url': url, 'caret_pos': caret_pos })
       new_history.append(key)
+      l = len(new_history)
+      if l > 10:
+        new_index -= l - 10
+      if new_index < 0:
+        new_index = 0
       s['graph_history'] = new_history[-10:]
       s['graph_index'] = new_index
     self.save_state()
@@ -112,7 +117,7 @@ class Model(ReminderStore):
   def is_connected(self, this, that):
     return that in self.connections_from[this] or this in self.connections_from[that]
       
-  def get_neighborhood_graph(self, key, distance = 1):
+  def get_neighborhood_graph(self, key, node_limit = 20):
     node_lookup = {}    
     graph_nodes = []
     tiers = []
@@ -133,10 +138,12 @@ class Model(ReminderStore):
       graph_nodes.append(to_node)
       parent[to_node] = node_lookup[from_key]
     
-    for i in range(distance):
+    node_count = current_tier = 0
+    while node_count < node_limit:
+    #for i in range(distance):
       tier = []
       tiers.append(tier)
-      for node in tiers[i]:
+      for node in tiers[current_tier]:
         key = node.key
         
         # Add direct descendants
@@ -144,21 +151,24 @@ class Model(ReminderStore):
         self.clean_old_connections(key)
         for child_key in children:
           self.add_connections(key, child_key)
-          if (i == 0 or len(node_lookup) < 20) and child_key not in node_lookup:
+          if (current_tier == 0 or node_count < node_limit) and child_key not in node_lookup:
             add_node(key, child_key, tier)
+            node_count += 1
           child_node = node_lookup.get(child_key, None)
           if child_node:
             node.add_edge(child_node)
             
         # Add previously seen connections, 'parent' etc.
-        if (i == 0 or len(node_lookup) < 20) and key in self.connections_to:
+        if (current_tier == 0 or node_count < node_limit) and key in self.connections_to:
           for other_key in self.connections_to[key]:
             if other_key not in node_lookup:
               add_node(key, other_key, tier)
+              node_count += 1
             node.add_edge(node_lookup[other_key])
-            
+      current_tier += 1
+      
     # Finalize with lowest tier cross-connections
-    for node in tiers[distance]:
+    for node in tiers[current_tier]:
       key = node.key
       for other_key in self.connections_to[key]:
         if other_key in node_lookup:
@@ -168,7 +178,7 @@ class Model(ReminderStore):
           node.add_edge(node_lookup[other_key])
           
     # Set connectivity-based importance
-    # Importance = outgoing - incoming connections
+    # Importance = outgoing-incoming connections
     for node in graph_nodes:
       key = node.key
       self.initialize_connections(key)

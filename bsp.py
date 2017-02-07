@@ -1,6 +1,9 @@
 # coding: utf-8
 
-import model, graph, ui, copy, math, random, extend, gestures, functools, colorsys, objc_util
+import model, graph, ui, copy, math, random, extend, gestures, functools, colorsys, objc_util, time
+from runasync import run_async
+
+from awz import EditorView
 
 gesture = gestures.Gestures()
 
@@ -62,25 +65,26 @@ class NodeLabel(extend.Extender):
     self.tint_color = 'white'
     
   def heatmap_color(self, value):
-    saturates_at = 6
+    saturates_at = 3
     # Convert to range 0..1
     value = max(value, -saturates_at)
     value = min(value, saturates_at)
     value += saturates_at
     value /= 2.0 * saturates_at
+    #value /= saturates_at
     h = 1.0 - value
     return colorsys.hls_to_rgb(h, 0.4, 0.3)
 
-class SpringView(ui.View):
+class ForceGraphView(ui.View):
 
   frame_duration = 1/100
   total_frames = 100
   iterations_per_frame = 10
+  center_node_fixed = False
 
-  def __init__(self, data_model, neighborhood_size = 2):
+  def __init__(self, data_model):
     self.background_color = 'white'
     self.model = data_model
-    self.neighborhood_size = neighborhood_size
     self.node_lookup = {}
     #self.previous_positions = {}
     self.positions = {}
@@ -88,8 +92,23 @@ class SpringView(ui.View):
     self.highlighted = set()
     self.animate_duration = 0.5
     self.center_position = graph.Vector(0,0)
+    
+    # Gestures
+    gesture.add_pinch(self, self.pinch)
     gesture.add_screen_edge_pan(self, self.back, edges = gestures.Gestures.EDGE_LEFT)
-    gesture.add_screen_edge_pan(self, self.show_editor, edges = gestures.Gestures.EDGE_RIGHT)
+    
+  def pinch(self, data):
+    if data.state == gestures.Gestures.BEGAN:
+      self.previous_scale = 0
+    if data.state == gestures.Gestures.CHANGED:
+      delta = data.scale - self.previous_scale
+      if abs(delta) > 0.2:
+        self.node_limit += int(3.0 * delta / abs(delta))
+        #print(self.node_limit)
+        self.previous_scale = data.scale
+        self.focus()
+    if data.state == gestures.Gestures.ENDED:
+      print(data.scale)
     
   def back(self, data):
     if data.state == gestures.Gestures.BEGAN:
@@ -97,12 +116,14 @@ class SpringView(ui.View):
       if key:
         self.focus(key)
     
-  def show_editor(self, data):
+  def show_editor_view(self, data):
     if data.state == gestures.Gestures.BEGAN:
-      v.push_view(other_view)
+      editor_view.open_current()
+      v.push_view(editor_view)
   
   def hide_editor_view(self, data):
     if data.state == gestures.Gestures.BEGAN:
+      self.focus()
       v.pop_view()
      
   def draw(self):
@@ -127,28 +148,36 @@ class SpringView(ui.View):
               path.line_width = 1
               ui.set_color('lightgray')
             path.stroke()
-      l = self[self.selected_node.key]
+      l = self[self.selected_node_key]
       ui.set_color((0,0,0,0.1))
       for d in range(1, 6):
         #d = 3
         path = ui.Path.rounded_rect(l.x - d, l.y - d, l.width + 2 * d, l.height + 2 * d, 2 * d)
         path.fill()
   
+  @run_async
   def select(self, key):
-    self.model.push(key)
-    self.focus(key)
+    self.selected_node_key = key
+    self.set_needs_display()
+    time.sleep(0.05)
+    self.model.push(self.selected_node_key)
+    self.focus(self.selected_node_key)
+    #editor_view.open(self.selected_node_key, self)
     
-  def focus(self, key):
+  def focus(self, key = None):
+    if not key: key = self.selected_node_key
+    else: self.selected_node_key = key
+    
     self.stop_animation()
     self.fixed_nodes = set()
-    self.selected_node_key = key
+    node_limit = int(self.width * self.height / 13900)
 
     history = self.model.get_history_before_current()
     self.highlighted = set()
     for key in history:
       self.highlighted.add(key)
     
-    (graph_nodes, self.node_lookup, tiers, parent) = self.model.get_neighborhood_graph(key, self.neighborhood_size)
+    (graph_nodes, self.node_lookup, tiers, parent) = self.model.get_neighborhood_graph(key, node_limit)
     
     self.selected_node = self.node_lookup[key]
     
@@ -156,19 +185,21 @@ class SpringView(ui.View):
     target_center = graph.Vector(self.width/2, self.height/2)
     
     center_node = self.selected_node = tiers[0][0]
-    center_label = self[key]
-    if center_label:
-      self.center_node_position = center_label.center
-      slide_vector = target_center - self.center_node_position
-      distance = slide_vector.length()
-      slide_vector_length = slide_vector.length()
-      self.slide_unit_vector = graph.Vector(0, 0) if slide_vector_length == 0 else slide_vector / slide_vector_length
-      total_units = sum(range(1, self.total_frames + 1))
-      self.slide_distance_per_unit = distance / total_units
-    else:
-      self.positions[center_node] = target_center
-      self.slide_unit_vector = graph.Vector(0, 0)
-      self.slide_distance_per_unit = 0
+    
+    if self.center_node_fixed:
+      center_label = self[key]
+      if center_label:
+        self.center_node_position = center_label.center
+        slide_vector = target_center - self.center_node_position
+        distance = slide_vector.length()
+        slide_vector_length = slide_vector.length()
+        self.slide_unit_vector = graph.Vector(0, 0) if slide_vector_length == 0 else slide_vector / slide_vector_length
+        total_units = sum(range(1, self.total_frames + 1))
+        self.slide_distance_per_unit = distance / total_units
+      else:
+        self.positions[center_node] = target_center
+        self.slide_unit_vector = graph.Vector(0, 0)
+        self.slide_distance_per_unit = 0
     
     previous_positions = self.positions
     self.positions = {}
@@ -193,7 +224,8 @@ class SpringView(ui.View):
           l = NodeLabel(MarginView(ui.Label()), node)
           l.alpha = 0.0
           self.add_subview(l)
-          l.size_to_fit()
+        l.text = node.title
+        l.size_to_fit()
         l.bring_to_front()
         l.set_colors(node.importance)
         l.touch_enabled = True
@@ -207,11 +239,20 @@ class SpringView(ui.View):
         ui.animate(fade_out, duration = 0.3)
         
     self.frame_count = 0
-    ui.delay(self.tick, self.frame_duration)
+    
+    self.animate_layout()
+    #ui.delay(self.tick, self.frame_duration)
         
+  @run_async      
+  def animate_layout(self):
+    while self.frame_count < self.total_frames:
+      self.tick()
+      time.sleep(self.frame_duration)
+      
   def tick(self):
-    slide_this_frame = (self.total_frames - self.frame_count) * self.slide_distance_per_unit
-    self.positions[self.selected_node] += self.slide_unit_vector * slide_this_frame
+    if self.center_node_fixed:
+      slide_this_frame = (self.total_frames - self.frame_count) * self.slide_distance_per_unit
+      self.positions[self.selected_node] += self.slide_unit_vector * slide_this_frame
     
     self.frame_count += 1
     
@@ -224,9 +265,6 @@ class SpringView(ui.View):
       l.alpha = 1.0
       
     self.set_needs_display()
-    
-    if self.frame_count < self.total_frames:
-      ui.delay(self.tick, self.frame_duration)
     
   def move_node(self, label, location):
     self.stop_animation()
@@ -243,18 +281,19 @@ class SpringView(ui.View):
     self.frame_count = self.total_frames
 
 data = model.Model()
+current_key = data.get_history_before_current()[-1]
 
-graph_view = SpringView(data)
-other_view = ui.View()
-other_view.background_color = 'blue'
+graph_view = ForceGraphView(data)
+editor_view = EditorView(data, graph_view)
 
-gesture.add_screen_edge_pan(other_view, graph_view.hide_editor_view, edges = gestures.Gestures.EDGE_LEFT)
+# Gestures for moving between main views
+gesture.add_screen_edge_pan(graph_view, graph_view.show_editor_view, edges = gestures.Gestures.EDGE_RIGHT)
+gesture.add_screen_edge_pan(editor_view, graph_view.hide_editor_view, edges = gestures.Gestures.EDGE_LEFT)
 
 v = ui.NavigationView(graph_view)
 v.navigation_bar_hidden = True
 
 v.present()
 
-history = data.get_history_before_current()
-graph_view.focus(history[-1])
+graph_view.focus(current_key)
 
